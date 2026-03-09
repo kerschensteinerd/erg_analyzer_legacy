@@ -1,5 +1,7 @@
 # ERG Analyzer v<version>
 
+Use this template for a shared macOS + Windows GitHub release.
+
 ## Downloads
 
 - macOS installer: `ERGAnalyzer-<version>-macOS-installer.zip`

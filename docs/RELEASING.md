@@ -69,18 +69,30 @@ Use [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) as the sign-off sheet
 
 ## 5. Publish GitHub Release
 
-Create a tag matching the `VERSION` file, for example:
+Choose the release shape that matches the build provenance:
 
-- `v0.1.0`
+- Shared cross-platform release: tag matches the `VERSION` file, for example `v0.1.0`
+- Platform-specific release: tag identifies platform and version, for example `windows-v0.1.0`
 
-Upload at least:
+Use a platform-specific tag when one platform is published from a different committed
+source state than another platform release. Keep the top-level `VERSION` file at the
+user-visible app version.
+
+Do not attach artifacts from different committed source states to the same GitHub
+release page.
+
+For a shared cross-platform release, upload at least:
 
 - `ERGAnalyzer-<version>-macOS-installer.zip`
 - `ERGAnalyzer-<version>-macOS-standalone.zip`
 - `ERGAnalyzer-<version>-Windows-installer.zip`
 - `ERGAnalyzer-<version>-Windows-standalone.zip`
 
-Use [docs/RELEASE_TEMPLATE.md](docs/RELEASE_TEMPLATE.md) for the release body.
+For a platform-specific release, upload only that platform's installer and standalone ZIPs.
+
+Use [docs/RELEASE_TEMPLATE.md](docs/RELEASE_TEMPLATE.md) for a shared release body.
+Use a platform-specific release-notes file when publishing a single-platform release, for
+example [docs/RELEASE_NOTES_windows-v0.1.0.md](docs/RELEASE_NOTES_windows-v0.1.0.md).
 
 ## Runtime delivery options
 

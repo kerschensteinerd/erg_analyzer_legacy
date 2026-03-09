@@ -28,12 +28,12 @@
 
 ## GitHub Release
 
-- Tag matches `VERSION`
+- Git tag matches the release shape (`v<version>` for shared releases, `<platform>-v<version>` for platform-specific releases)
+- Uploaded assets were built from the tagged commit
 - Release notes updated
-- macOS installer ZIP uploaded
-- macOS standalone ZIP uploaded
-- Windows installer ZIP uploaded
-- Windows standalone ZIP uploaded
+- Shared release: macOS installer and standalone ZIPs uploaded
+- Shared release: Windows installer and standalone ZIPs uploaded
+- Platform-specific release: only that platform's installer and standalone ZIPs uploaded
 - MATLAB Runtime requirement noted
 - Known limitations noted
 - Unsigned app warning documented if applicable
