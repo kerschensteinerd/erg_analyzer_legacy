@@ -1,0 +1,21 @@
+.DS_Store
+~$*
+*.asv
+*.prj
+*.log
+*.tmp
+
+dist/
+build/
+installer/
+release/
+packaged/
+
+UCanAccess_*/
+erg_ucanaccess/
+
+test_data/
+For testing 1.xlsx
+LKC-ERGanalyzer_2013_v3.xls
+
+tools/*.class
