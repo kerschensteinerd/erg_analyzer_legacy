@@ -92,7 +92,8 @@ For a platform-specific release, upload only that platform's installer and stand
 
 Use [docs/RELEASE_TEMPLATE.md](docs/RELEASE_TEMPLATE.md) for a shared release body.
 Use a platform-specific release-notes file when publishing a single-platform release, for
-example [docs/RELEASE_NOTES_windows-v0.1.0.md](docs/RELEASE_NOTES_windows-v0.1.0.md).
+example [docs/RELEASE_NOTES_macos-v0.1.0.md](docs/RELEASE_NOTES_macos-v0.1.0.md) or
+[docs/RELEASE_NOTES_windows-v0.1.0.md](docs/RELEASE_NOTES_windows-v0.1.0.md).
 
 ## Runtime delivery options
 
