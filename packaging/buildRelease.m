@@ -33,6 +33,9 @@ results = compiler.build.standaloneApplication(appFile, ...
     'AutoDetectDataFiles', false, ...
     'Verbose', true);
 
+if ismac
+    localStripMacOSXattrs(standaloneDir);
+end
 standaloneZip = fullfile(outputRoot, sprintf('ERGAnalyzer-%s-%s-standalone.zip', versionText, platformTag));
 localZipBuildFolder(standaloneDir, standaloneZip);
 
@@ -57,6 +60,9 @@ if opts.CreateInstaller
             fullfile(rootDir, 'IMPORTER_REQUIREMENTS.md')}, ...
         'Verbose', true);
 
+    if ismac
+        localStripMacOSXattrs(installerDir);
+    end
     installerZip = fullfile(outputRoot, sprintf('ERGAnalyzer-%s-%s-installer.zip', versionText, platformTag));
     localZipBuildFolder(installerDir, installerZip);
 end
@@ -168,6 +174,25 @@ if isempty(entryNames)
 end
 
 zip(zipPath, entryNames, sourceDir);
+end
+
+function localStripMacOSXattrs(targetDir)
+% Remove extended attributes from a directory tree before zipping.
+% This prevents build-time xattrs from appearing in the ZIP and avoids
+% macOS Gatekeeper treating extracted files as damaged when they are
+% downloaded and extracted on macOS.
+%
+% The path is wrapped in single quotes and any embedded single quotes are
+% escaped as '\'' (end quote, literal quote, reopen quote) to handle paths
+% containing spaces or other special shell characters.
+quotedDir = ['''' strrep(targetDir, '''', '''\''') ''''];
+cmd = ['xattr -cr ' quotedDir];
+[status, cmdout] = system(cmd);
+if status ~= 0
+    warning('ERG:XattrFailed', ...
+        'xattr -cr failed for %s (exit status %d): %s The resulting ZIP may trigger macOS Gatekeeper warnings.', ...
+        targetDir, status, strtrim(cmdout));
+end
 end
 
 function localWriteBuildInfo(outputRoot, buildInfo)
