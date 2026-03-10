@@ -35,11 +35,25 @@ After installation, open `ERG Analyzer`.
 
 ## Troubleshooting
 
-### macOS says the app cannot be opened
+### macOS says the installer is damaged and can't be opened
 
-If the release is unsigned, macOS may block it the first time.
+macOS applies a quarantine flag to files downloaded from the internet. For
+unsigned apps this causes a "damaged and can't be opened" error that cannot be
+dismissed through System Settings.
 
-Open:
+Open **Terminal** and run:
+
+```
+xattr -cr ~/Downloads/ERGAnalyzer-<version>-macOS-installer
+```
+
+Replace the path with the actual path to the unzipped installer folder or
+`.app` bundle on your machine, then try running the installer again.
+
+### macOS says the app cannot be opened (unidentified developer)
+
+If macOS shows a different prompt about an unidentified developer rather than
+the "damaged" message, open:
 
 `System Settings > Privacy & Security`
 
