@@ -124,7 +124,7 @@ versionFile = fullfile(rootDir, 'VERSION');
 if isfile(versionFile)
     versionText = strtrim(fileread(versionFile));
 else
-    versionText = '0.1.0';
+    versionText = '0.1.1';
 end
 end
 

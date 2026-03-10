@@ -5,7 +5,7 @@ if ~isfile(filePath)
     error("ERG:FileNotFound", "File not found: %s", filePath);
 end
 
-mdbData = readMdbTables(filePath);
+mdbData = readMdbTables(filePath, "full");
 schema = struct();
 schema.Provider = mdbData.Provider;
 schema.Tables = repmat(struct("Name", "", "Columns", strings(0, 1), "Height", 0), 1, numel(mdbData.Tables));

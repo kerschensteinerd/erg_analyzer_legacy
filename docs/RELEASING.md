@@ -71,7 +71,7 @@ Use [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) as the sign-off sheet
 
 Choose the release shape that matches the build provenance:
 
-- Shared cross-platform release: tag matches the `VERSION` file, for example `v0.1.0`
+- Shared cross-platform release: tag matches the `VERSION` file, for example `v0.1.1`
 - Platform-specific release: tag identifies platform and version, for example `windows-v0.1.0`
 
 Use a platform-specific tag when one platform is published from a different committed

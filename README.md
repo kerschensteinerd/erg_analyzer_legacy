@@ -19,6 +19,11 @@ Use the latest GitHub Release instead:
 
 Detailed end-user instructions are in [docs/INSTALL.md](docs/INSTALL.md).
 
+Notes for packaged releases:
+- First launch can still be slower because MATLAB Runtime has to start.
+- First import of a new `.mdb` can be slower because the app builds a local cache for faster repeat imports.
+- Unsigned macOS builds may need the Gatekeeper / `xattr` workaround documented in [docs/INSTALL.md](docs/INSTALL.md).
+
 ## For MATLAB Users
 
 If you already have MATLAB and want to run from source:

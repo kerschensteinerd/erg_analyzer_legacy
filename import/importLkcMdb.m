@@ -1,11 +1,19 @@
-function session = importLkcMdb(filePath)
+function [session, importInfo] = importLkcMdb(filePath, varargin)
 % importLkcMdb Import a legacy LKC ERG MDB file into the normalized session format.
 
 if ~isfile(filePath)
     error("ERG:FileNotFound", "File not found: %s", filePath);
 end
 
-mdbData = readMdbTables(filePath);
+logFcn = localResolveLogFcn(varargin{:});
+overallTimer = tic;
+
+tableReadTimer = tic;
+mdbData = readMdbTables(filePath, "import");
+tableReadSeconds = toc(tableReadTimer);
+localLog(logFcn, sprintf('MDB table discovery + load: %.2f s.', tableReadSeconds));
+
+rebuildTimer = tic;
 metadataTable = localFindMetadataTable(mdbData.Tables);
 
 if isempty(metadataTable)
@@ -16,6 +24,8 @@ end
 
 waveformLookup = localBuildWaveformLookup(mdbData.Tables, metadataTable);
 records = localBuildRecords(metadataTable, waveformLookup);
+rebuildSeconds = toc(rebuildTimer);
+localLog(logFcn, sprintf('Waveform extraction + normalization: %.2f s.', rebuildSeconds));
 
 if isempty(records)
     error("ERG:NoWaveformsImported", [ ...
@@ -23,7 +33,10 @@ if isempty(records)
         "Check whether this LKC file stores waveform samples in 'Data', 'MultiData', or an LVAL-style table."]);
 end
 
+finalizeTimer = tic;
 [records, subjectName, testDate] = localFinalizeRecords(records, metadataTable);
+finalizeSeconds = toc(finalizeTimer);
+localLog(logFcn, sprintf('Session metadata finalization: %.2f s.', finalizeSeconds));
 
 session = struct();
 session.sourceFile = filePath;
@@ -38,6 +51,13 @@ session.analysisSettings = struct( ...
     "numSessions", max([records.sessionIndex]));
 session.records = records;
 session.results = struct();
+
+importInfo = struct( ...
+    "Provider", string(mdbData.Provider), ...
+    "ReadTablesSeconds", tableReadSeconds, ...
+    "RebuildWaveformsSeconds", rebuildSeconds, ...
+    "FinalizeSessionSeconds", finalizeSeconds, ...
+    "TotalSeconds", toc(overallTimer));
 end
 
 function metadataTable = localFindMetadataTable(tables)
@@ -715,6 +735,26 @@ end
 function normalized = localNormalizeName(names)
 names = string(names);
 normalized = lower(regexprep(names, '[^a-zA-Z0-9]+', ''));
+end
+
+function logFcn = localResolveLogFcn(varargin)
+logFcn = [];
+if isempty(varargin)
+    return;
+end
+
+candidate = varargin{1};
+if isa(candidate, 'function_handle')
+    logFcn = candidate;
+end
+end
+
+function localLog(logFcn, message)
+if isempty(logFcn)
+    return;
+end
+
+logFcn(string(message));
 end
 
 function record = localEmptyRecord()

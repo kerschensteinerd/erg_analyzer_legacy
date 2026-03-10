@@ -22,11 +22,15 @@ If your institution does not allow web downloads during install, ask the maintai
 
 After installation, open `ERG Analyzer`.
 
+The app may still feel slower the first time it launches because MATLAB Runtime has to start. Opening the app again should be faster.
+
 ## 4. Open your data
 
 1. Click `Browse...`
 2. Choose an LKC `.mdb` file or a saved `.mat` session
 3. Click `Import File`
+
+The first import of a new `.mdb` may take longer while the app builds a local cache. Re-importing the same unchanged file should be much faster.
 
 ## 5. Export results
 
@@ -77,6 +81,24 @@ machine, then try running the installer again.
 
 If your IT policy prevents running Terminal commands, ask your IT department to
 whitelist the application or contact the maintainer for a code-signed build.
+
+If Terminal reports `Permission denied`, retry with `sudo`:
+
+```bash
+sudo xattr -cr ~/Downloads/ERGAnalyzer-<version>-macOS-installer
+```
+
+You can also run the same commands against the unzipped `.app` bundle instead
+of the installer folder, for example:
+
+```bash
+xattr -cr ~/Downloads/ERGAnalyzer-<version>-macOS-installer.app
+sudo xattr -cr ~/Downloads/ERGAnalyzer-<version>-macOS-installer.app
+```
+
+If you are not sure about the path, drag the installer folder or `.app` from
+Finder into the Terminal window after `xattr -cr ` or `sudo xattr -cr ` and
+macOS will paste the exact path.
 
 ### Windows shows a SmartScreen warning
 

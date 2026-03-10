@@ -52,11 +52,34 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
         SelectedRawRows double = []
         LastInputDirectory string = string(pwd)
         LastOutputDirectory string = string(pwd)
+        StartupTimer uint64 = uint64(0)
+        ImportTabBuildSeconds double = NaN
+        ShellBuildSeconds double = NaN
+        RawTabBuilt logical = false
+        AverageTabBuilt logical = false
+        MeasuresTabBuilt logical = false
+        ExportTabBuilt logical = false
+        RawViewDirty logical = false
+        AverageViewDirty logical = false
+        MeasuresViewDirty logical = false
     end
 
     methods (Access = private)
         function startupFcn(app)
+            launchContext = app.consumeLaunchContext();
             app.appendLog("App started.");
+            if app.StartupTimer ~= 0
+                app.appendLog(sprintf('Startup total: %.2f s.', toc(app.StartupTimer)));
+            end
+            if isfield(launchContext, "PathSetupSeconds")
+                app.appendLog(sprintf('Startup path setup: %.2f s.', launchContext.PathSetupSeconds));
+            end
+            if ~isnan(app.ImportTabBuildSeconds)
+                app.appendLog(sprintf('Startup import view build: %.2f s.', app.ImportTabBuildSeconds));
+            end
+            if ~isnan(app.ShellBuildSeconds)
+                app.appendLog(sprintf('Startup shell ready: %.2f s.', app.ShellBuildSeconds));
+            end
             app.appendLog("Select a .mdb or normalized .mat file to begin.");
             app.SummaryTextArea.Value = { ...
                 'No session loaded.'; ...
@@ -64,43 +87,134 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
                 '1. Import an MDB file or normalized MAT session.'; ...
                 '2. Review traces and exclude noisy records.'; ...
                 '3. Inspect measures and export summary tables.'};
-            app.ExportPathField.Value = fullfile(pwd, "erg_summary.xlsx");
-            app.configureEmptyViews();
+        end
+
+        function launchContext = consumeLaunchContext(app) %#ok<MANU>
+            launchContext = struct();
+            if isappdata(0, 'ERGAnalyzerLaunchContext')
+                launchContext = getappdata(0, 'ERGAnalyzerLaunchContext');
+                rmappdata(0, 'ERGAnalyzerLaunchContext');
+            end
         end
 
         function configureEmptyViews(app)
-            app.RawProtocolDropDown.Items = {'All'};
-            app.RawProtocolDropDown.Value = "All";
-            app.RawSessionDropDown.Items = {'All'};
-            app.RawSessionDropDown.Value = "All";
-            app.RawEyeDropDown.Items = {'All', 'R', 'L'};
-            app.RawEyeDropDown.Value = "All";
-            app.RawFlashDropDown.Items = {'All'};
-            app.RawFlashDropDown.Value = "All";
+            if app.RawTabBuilt
+                app.RawProtocolDropDown.Items = {'All'};
+                app.RawProtocolDropDown.Value = "All";
+                app.RawSessionDropDown.Items = {'All'};
+                app.RawSessionDropDown.Value = "All";
+                app.RawEyeDropDown.Items = {'All', 'R', 'L'};
+                app.RawEyeDropDown.Value = "All";
+                app.RawFlashDropDown.Items = {'All'};
+                app.RawFlashDropDown.Value = "All";
+                app.RawTable.Data = table();
+                app.clearAxes(app.RawAxes);
+                title(app.RawAxes, "Raw Traces");
+                xlabel(app.RawAxes, "Time (ms)");
+                ylabel(app.RawAxes, "Amplitude (\muV)");
+            end
 
-            app.AvgProtocolDropDown.Items = {'All'};
-            app.AvgProtocolDropDown.Value = "All";
-            app.AvgSessionDropDown.Items = {'All'};
-            app.AvgSessionDropDown.Value = "All";
-            app.AvgEyeDropDown.Items = {'All', 'R', 'L'};
-            app.AvgEyeDropDown.Value = "All";
+            if app.AverageTabBuilt
+                app.AvgProtocolDropDown.Items = {'All'};
+                app.AvgProtocolDropDown.Value = "All";
+                app.AvgSessionDropDown.Items = {'All'};
+                app.AvgSessionDropDown.Value = "All";
+                app.AvgEyeDropDown.Items = {'All', 'R', 'L'};
+                app.AvgEyeDropDown.Value = "All";
+                app.AverageTable.Data = table();
+                app.clearAxes(app.AverageAxes);
+                title(app.AverageAxes, "Averaged Responses");
+                xlabel(app.AverageAxes, "Time (ms)");
+                ylabel(app.AverageAxes, "Amplitude (\muV)");
+            end
 
-            app.MeasuresSessionDropDown.Items = {'All'};
-            app.MeasuresSessionDropDown.Value = "All";
+            if app.MeasuresTabBuilt
+                app.MeasuresSessionDropDown.Items = {'All'};
+                app.MeasuresSessionDropDown.Value = "All";
+                app.MeasuresTable.Data = table();
+            end
 
-            app.RawTable.Data = table();
-            app.AverageTable.Data = table();
-            app.MeasuresTable.Data = table();
+            if app.ExportTabBuilt
+                app.ExportPathField.Value = char(app.defaultExportPath());
+            end
+        end
 
-            cla(app.RawAxes);
-            title(app.RawAxes, "Raw Traces");
-            xlabel(app.RawAxes, "Time (ms)");
-            ylabel(app.RawAxes, "Amplitude (\muV)");
+        function tf = hasLoadedSession(app)
+            tf = isfield(app.Session, "records") && ~isempty(app.Session.records);
+        end
 
-            cla(app.AverageAxes);
-            title(app.AverageAxes, "Averaged Responses");
-            xlabel(app.AverageAxes, "Time (ms)");
-            ylabel(app.AverageAxes, "Amplitude (\muV)");
+        function tf = sessionHasResults(app, session) %#ok<INUSD>
+            tf = isfield(session, "results") && isstruct(session.results) && ...
+                (isfield(session.results, "rawTable") || isfield(session.results, "summaryTable"));
+        end
+
+        function markAllViewsDirty(app)
+            app.RawViewDirty = true;
+            app.AverageViewDirty = true;
+            app.MeasuresViewDirty = true;
+        end
+
+        function seconds = refreshCurrentViewIfNeeded(app)
+            refreshTimer = tic;
+
+            if isempty(app.TabGroup) || isempty(app.TabGroup.SelectedTab)
+                seconds = 0;
+                return;
+            end
+
+            app.ensureSelectedTabBuilt(app.TabGroup.SelectedTab);
+
+            if app.TabGroup.SelectedTab == app.RawTab && app.RawTabBuilt && app.RawViewDirty
+                app.refreshRawView();
+            elseif app.TabGroup.SelectedTab == app.AverageTab && app.AverageTabBuilt && app.AverageViewDirty
+                app.refreshAverageView();
+            elseif app.TabGroup.SelectedTab == app.MeasuresTab && app.MeasuresTabBuilt && app.MeasuresViewDirty
+                app.refreshMeasuresView();
+            end
+
+            seconds = toc(refreshTimer);
+        end
+
+        function ensureSelectedTabBuilt(app, selectedTab)
+            if selectedTab == app.RawTab
+                app.ensureRawTabBuilt();
+            elseif selectedTab == app.AverageTab
+                app.ensureAverageTabBuilt();
+            elseif selectedTab == app.MeasuresTab
+                app.ensureMeasuresTabBuilt();
+            elseif selectedTab == app.ExportTab
+                app.ensureExportTabBuilt();
+            end
+        end
+
+        function TabGroupSelectionChanged(app, event)
+            app.ensureSelectedTabBuilt(event.NewValue);
+            if ~app.hasLoadedSession()
+                return;
+            end
+
+            if event.NewValue == app.RawTab && app.RawViewDirty
+                app.refreshRawView();
+            elseif event.NewValue == app.AverageTab && app.AverageViewDirty
+                app.refreshAverageView();
+            elseif event.NewValue == app.MeasuresTab && app.MeasuresViewDirty
+                app.refreshMeasuresView();
+            elseif event.NewValue == app.ExportTab && app.ExportTabBuilt
+                app.ExportPathField.Value = char(app.defaultExportPath());
+            end
+        end
+
+        function defaultPath = defaultExportPath(app)
+            if app.hasLoadedSession()
+                sourceStem = "erg_summary";
+                try
+                    [~, sourceStem] = fileparts(char(string(app.Session.sourceFile)));
+                catch
+                end
+                defaultPath = fullfile(char(app.LastOutputDirectory), char(sourceStem + "_summary.xlsx"));
+            else
+                defaultPath = fullfile(char(app.LastOutputDirectory), "erg_summary.xlsx");
+            end
         end
 
         function SelectFileButtonPushed(app, ~)
@@ -124,18 +238,24 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
 
             try
                 app.appendLog("Importing " + string(filePath));
-                session = importLkcFile(filePath);
-                session = computeSessionResults(session);
+                [session, importInfo] = importLkcFile(filePath, @(msg) app.appendLog(msg));
+                if ~app.sessionHasResults(session)
+                    computeTimer = tic;
+                    session = computeSessionResults(session);
+                    app.appendLog(sprintf('Computed session results in %.2f s.', toc(computeTimer)));
+                end
+
                 app.Session = session;
-                app.updateForSession();
-                app.appendLog("Import completed.");
+                refreshSeconds = app.updateForSession();
+                app.appendLog(sprintf('First view refresh: %.2f s.', refreshSeconds));
+                app.appendLog(sprintf('Import completed in %.2f s.', importInfo.TotalSeconds + refreshSeconds));
             catch err
                 app.appendLog("Import failed: " + string(err.message));
                 uialert(app.UIFigure, err.message, "Import failed");
             end
         end
 
-        function updateForSession(app)
+        function refreshSeconds = updateForSession(app)
             summaryLines = [ ...
                 "Source: " + string(app.Session.sourceFile); ...
                 "Subject: " + string(app.Session.subject); ...
@@ -144,6 +264,29 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
                 "Records: " + string(numel(app.Session.records)); ...
                 "Sessions: " + string(max(app.Session.results.rawTable.SessionIndex))];
             app.SummaryTextArea.Value = cellstr(summaryLines(:));
+
+            app.markAllViewsDirty();
+
+            if app.RawTabBuilt
+                app.configureRawControls(true);
+            end
+            if app.AverageTabBuilt
+                app.configureAverageControls(true);
+            end
+            if app.MeasuresTabBuilt
+                app.configureMeasuresControls(true);
+            end
+            if app.ExportTabBuilt
+                app.ExportPathField.Value = char(app.defaultExportPath());
+            end
+
+            refreshSeconds = app.refreshCurrentViewIfNeeded();
+        end
+
+        function configureRawControls(app, resetValues)
+            if ~app.RawTabBuilt
+                return;
+            end
 
             rawTable = app.Session.results.rawTable;
             protocols = ["All"; unique(string(rawTable.Protocol))];
@@ -155,28 +298,77 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             if ~isempty(flashValues)
                 flashLabels = ["All"; string(flashValues)];
             end
-            app.RawProtocolDropDown.Items = cellstr(protocols);
-            app.RawProtocolDropDown.Value = "All";
-            app.RawSessionDropDown.Items = cellstr(sessions);
-            app.RawSessionDropDown.Value = "All";
-            app.RawFlashDropDown.Items = cellstr(flashLabels);
-            app.RawFlashDropDown.Value = "All";
-            app.AvgProtocolDropDown.Items = cellstr(protocols);
-            app.AvgProtocolDropDown.Value = "All";
-            app.AvgSessionDropDown.Items = cellstr(sessions);
-            app.AvgSessionDropDown.Value = "All";
-            app.MeasuresSessionDropDown.Items = cellstr(sessions);
-            app.MeasuresSessionDropDown.Value = "All";
 
-            app.refreshRawView();
-            app.refreshAverageView();
-            app.refreshMeasuresView();
+            app.RawProtocolDropDown.Items = cellstr(protocols);
+            app.RawSessionDropDown.Items = cellstr(sessions);
+            app.RawFlashDropDown.Items = cellstr(flashLabels);
+            app.RawEyeDropDown.Items = {'All', 'R', 'L'};
+
+            if resetValues || ~any(string(app.RawProtocolDropDown.Items) == string(app.RawProtocolDropDown.Value))
+                app.RawProtocolDropDown.Value = "All";
+            end
+            if resetValues || ~any(string(app.RawSessionDropDown.Items) == string(app.RawSessionDropDown.Value))
+                app.RawSessionDropDown.Value = "All";
+            end
+            if resetValues || ~any(string(app.RawFlashDropDown.Items) == string(app.RawFlashDropDown.Value))
+                app.RawFlashDropDown.Value = "All";
+            end
+            if resetValues || ~any(string(app.RawEyeDropDown.Items) == string(app.RawEyeDropDown.Value))
+                app.RawEyeDropDown.Value = "All";
+            end
+        end
+
+        function configureAverageControls(app, resetValues)
+            if ~app.AverageTabBuilt
+                return;
+            end
+
+            rawTable = app.Session.results.rawTable;
+            protocols = ["All"; unique(string(rawTable.Protocol))];
+            sessionLabels = unique(string(rawTable.SessionLabel), 'stable');
+            sessionLabels = sessionLabels(strlength(sessionLabels) > 0);
+            sessions = ["All"; sessionLabels];
+
+            app.AvgProtocolDropDown.Items = cellstr(protocols);
+            app.AvgSessionDropDown.Items = cellstr(sessions);
+            app.AvgEyeDropDown.Items = {'All', 'R', 'L'};
+
+            if resetValues || ~any(string(app.AvgProtocolDropDown.Items) == string(app.AvgProtocolDropDown.Value))
+                app.AvgProtocolDropDown.Value = "All";
+            end
+            if resetValues || ~any(string(app.AvgSessionDropDown.Items) == string(app.AvgSessionDropDown.Value))
+                app.AvgSessionDropDown.Value = "All";
+            end
+            if resetValues || ~any(string(app.AvgEyeDropDown.Items) == string(app.AvgEyeDropDown.Value))
+                app.AvgEyeDropDown.Value = "All";
+            end
+        end
+
+        function configureMeasuresControls(app, resetValues)
+            if ~app.MeasuresTabBuilt
+                return;
+            end
+
+            rawTable = app.Session.results.rawTable;
+            sessionLabels = unique(string(rawTable.SessionLabel), 'stable');
+            sessionLabels = sessionLabels(strlength(sessionLabels) > 0);
+            sessions = ["All"; sessionLabels];
+            app.MeasuresSessionDropDown.Items = cellstr(sessions);
+
+            if resetValues || ~any(string(app.MeasuresSessionDropDown.Items) == string(app.MeasuresSessionDropDown.Value))
+                app.MeasuresSessionDropDown.Value = "All";
+            end
         end
 
         function refreshRawView(app, ~, ~)
+            if ~app.RawTabBuilt
+                return;
+            end
+
             if ~isfield(app.Session, "results") || isempty(app.Session.results.rawTable)
                 app.RawTable.Data = table();
                 app.clearAxes(app.RawAxes);
+                app.RawViewDirty = false;
                 return;
             end
 
@@ -218,12 +410,18 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             title(app.RawAxes, "Raw Traces");
             xlabel(app.RawAxes, "Time (ms)");
             ylabel(app.RawAxes, "Amplitude (\muV)");
+            app.RawViewDirty = false;
         end
 
         function refreshAverageView(app, ~, ~)
+            if ~app.AverageTabBuilt
+                return;
+            end
+
             if ~isfield(app.Session, "results") || isempty(app.Session.results.rawTable)
                 app.AverageTable.Data = table();
                 app.clearAxes(app.AverageAxes);
+                app.AverageViewDirty = false;
                 return;
             end
 
@@ -231,6 +429,7 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             if isempty(filtered)
                 app.AverageTable.Data = table();
                 app.clearAxes(app.AverageAxes);
+                app.AverageViewDirty = false;
                 return;
             end
 
@@ -279,9 +478,14 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
 
             plotRows = sortrows(plotRows, {'SessionIndex', 'Eye', 'RecordNumber'});
             app.AverageTable.Data = plotRows(:, setdiff(plotRows.Properties.VariableNames, "SessionIndex", "stable"));
+            app.AverageViewDirty = false;
         end
 
         function refreshMeasuresView(app, ~, ~)
+            if ~app.MeasuresTabBuilt
+                return;
+            end
+
             if isfield(app.Session, "results") && isfield(app.Session.results, "summaryTable")
                 measuresTable = app.getFilteredMeasuresTable();
                 if any(strcmp(measuresTable.Properties.VariableNames, 'SessionIndex'))
@@ -291,6 +495,7 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             else
                 app.MeasuresTable.Data = table();
             end
+            app.MeasuresViewDirty = false;
         end
 
         function measuresTable = getFilteredMeasuresTable(app)
@@ -300,6 +505,10 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             end
 
             measuresTable = app.Session.results.summaryTable;
+            if ~app.MeasuresTabBuilt
+                return;
+            end
+
             sessionFilter = string(app.MeasuresSessionDropDown.Value);
             if sessionFilter ~= "All"
                 measuresTable = measuresTable(string(measuresTable.SessionLabel) == sessionFilter, :);
@@ -313,6 +522,10 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             end
 
             rawTable = app.Session.results.rawTable;
+            if ~app.RawTabBuilt
+                return;
+            end
+
             sessionFilter = string(app.RawSessionDropDown.Value);
             protocolFilter = string(app.RawProtocolDropDown.Value);
             eyeFilter = string(app.RawEyeDropDown.Value);
@@ -349,6 +562,11 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             end
 
             avgTable = app.Session.results.rawTable;
+            if ~app.AverageTabBuilt
+                avgTable = avgTable(avgTable.IsIncluded, :);
+                return;
+            end
+
             sessionFilter = string(app.AvgSessionDropDown.Value);
             protocolFilter = string(app.AvgProtocolDropDown.Value);
             eyeFilter = string(app.AvgEyeDropDown.Value);
@@ -421,6 +639,9 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
         end
 
         function clearAxes(app, ax) %#ok<INUSD>
+            if isempty(ax) || ~isvalid(ax)
+                return;
+            end
             hold(ax, "off");
             legend(ax, "off");
             allChildren = findall(ax);
@@ -495,9 +716,14 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             end
 
             app.Session = computeSessionResults(app.Session);
+            app.markAllViewsDirty();
+            if app.AverageTabBuilt
+                app.configureAverageControls(false);
+            end
+            if app.MeasuresTabBuilt
+                app.configureMeasuresControls(false);
+            end
             app.refreshRawView();
-            app.refreshAverageView();
-            app.refreshMeasuresView();
 
             if includeValue
                 app.appendLog("Selected records marked included.");
@@ -549,7 +775,8 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
                 return;
             end
 
-            [fileName, fileDir] = uiputfile("*.mat", "Save ERG Session", "erg_session.mat");
+            startPath = app.resolveBrowseStartPath("", app.LastOutputDirectory, "erg_session.mat");
+            [fileName, fileDir] = uiputfile("*.mat", "Save ERG Session", startPath);
             if isequal(fileName, 0)
                 return;
             end
@@ -761,6 +988,7 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
 
     methods (Access = private)
         function createComponents(app)
+            shellTimer = tic;
             app.UIFigure = uifigure("Visible", "off");
             app.UIFigure.Position = [100, 100, 1320, 820];
             app.UIFigure.Name = "ERG Analyzer";
@@ -772,14 +1000,19 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             app.TabGroup = uitabgroup(app.GridLayout);
             app.TabGroup.Layout.Row = 1;
             app.TabGroup.Layout.Column = 1;
+            app.TabGroup.SelectionChangedFcn = createCallbackFcn(app, @TabGroupSelectionChanged, true);
 
+            importTimer = tic;
             app.createImportTab();
-            app.createRawTab();
-            app.createAverageTab();
-            app.createMeasuresTab();
-            app.createExportTab();
+            app.ImportTabBuildSeconds = toc(importTimer);
+
+            app.createRawTabShell();
+            app.createAverageTabShell();
+            app.createMeasuresTabShell();
+            app.createExportTabShell();
 
             app.UIFigure.Visible = "on";
+            app.ShellBuildSeconds = toc(shellTimer);
         end
 
         function createImportTab(app)
@@ -823,8 +1056,15 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             app.ImportLogArea.Layout.Column = 3;
         end
 
-        function createRawTab(app)
+        function createRawTabShell(app)
             app.RawTab = uitab(app.TabGroup, "Title", "Raw Traces");
+        end
+
+        function ensureRawTabBuilt(app)
+            if app.RawTabBuilt
+                return;
+            end
+
             grid = uigridlayout(app.RawTab, [3, 10]);
             grid.RowHeight = {32, "2x", "1x"};
             grid.ColumnWidth = {120, 130, 110, 110, 120, 130, 130, 140, 140, "1x"};
@@ -885,10 +1125,25 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             app.RawTable.Layout.Row = 3;
             app.RawTable.Layout.Column = [1, 10];
             app.RawTable.CellSelectionCallback = createCallbackFcn(app, @RawTableSelectionChanged, true);
+
+            app.RawTabBuilt = true;
+            app.RawViewDirty = true;
+            if app.hasLoadedSession()
+                app.configureRawControls(true);
+            else
+                app.configureEmptyViews();
+            end
         end
 
-        function createAverageTab(app)
+        function createAverageTabShell(app)
             app.AverageTab = uitab(app.TabGroup, "Title", "Averages");
+        end
+
+        function ensureAverageTabBuilt(app)
+            if app.AverageTabBuilt
+                return;
+            end
+
             grid = uigridlayout(app.AverageTab, [3, 7]);
             grid.RowHeight = {32, "2x", "1x"};
             grid.ColumnWidth = {120, 140, 120, 140, 140, "1x", "1x"};
@@ -928,10 +1183,25 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             app.AverageTable = uitable(grid);
             app.AverageTable.Layout.Row = 3;
             app.AverageTable.Layout.Column = [1, 7];
+
+            app.AverageTabBuilt = true;
+            app.AverageViewDirty = true;
+            if app.hasLoadedSession()
+                app.configureAverageControls(true);
+            else
+                app.configureEmptyViews();
+            end
         end
 
-        function createMeasuresTab(app)
+        function createMeasuresTabShell(app)
             app.MeasuresTab = uitab(app.TabGroup, "Title", "Measures");
+        end
+
+        function ensureMeasuresTabBuilt(app)
+            if app.MeasuresTabBuilt
+                return;
+            end
+
             grid = uigridlayout(app.MeasuresTab, [2, 1]);
             grid.RowHeight = {32, '1x'};
             grid.Padding = [12, 12, 12, 12];
@@ -944,10 +1214,25 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             app.MeasuresTable = uitable(grid);
             app.MeasuresTable.Layout.Row = 2;
             app.MeasuresTable.Layout.Column = 1;
+
+            app.MeasuresTabBuilt = true;
+            app.MeasuresViewDirty = true;
+            if app.hasLoadedSession()
+                app.configureMeasuresControls(true);
+            else
+                app.configureEmptyViews();
+            end
         end
 
-        function createExportTab(app)
+        function createExportTabShell(app)
             app.ExportTab = uitab(app.TabGroup, "Title", "Export");
+        end
+
+        function ensureExportTabBuilt(app)
+            if app.ExportTabBuilt
+                return;
+            end
+
             grid = uigridlayout(app.ExportTab, [4, 4]);
             grid.RowHeight = {22, 32, "1x", "1x"};
             grid.ColumnWidth = {90, "1x", 120, 120};
@@ -975,11 +1260,15 @@ classdef ERGAnalyzerApp < matlab.apps.AppBase
             app.SaveMatButton.Layout.Row = 2;
             app.SaveMatButton.Layout.Column = 4;
             app.SaveMatButton.ButtonPushedFcn = createCallbackFcn(app, @SaveMatButtonPushed, true);
+
+            app.ExportTabBuilt = true;
+            app.ExportPathField.Value = char(app.defaultExportPath());
         end
     end
 
     methods (Access = public)
         function app = ERGAnalyzerApp()
+            app.StartupTimer = tic;
             createComponents(app)
             registerApp(app, app.UIFigure)
             runStartupFcn(app, @startupFcn)

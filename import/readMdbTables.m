@@ -1,12 +1,17 @@
-function mdbData = readMdbTables(filePath)
+function mdbData = readMdbTables(filePath, mode)
 % readMdbTables Read user tables from an Access MDB using the first available provider.
+
+if nargin < 2 || strlength(string(mode)) == 0
+    mode = "full";
+end
+mode = localNormalizeMode(mode);
 
 providers = {@localReadViaAdo, @localReadViaJdbc};
 lastError = [];
 
 for idx = 1:numel(providers)
     try
-        mdbData = providers{idx}(filePath);
+        mdbData = providers{idx}(filePath, mode);
         return;
     catch err
         lastError = err;
@@ -22,7 +27,14 @@ msg = sprintf([ ...
 error("ERG:NoMdbProvider", "%s", msg);
 end
 
-function mdbData = localReadViaAdo(filePath)
+function mode = localNormalizeMode(mode)
+mode = lower(string(mode));
+if mode ~= "full" && mode ~= "import"
+    error("ERG:InvalidReadMode", "Unsupported MDB read mode '%s'.", char(mode));
+end
+end
+
+function mdbData = localReadViaAdo(filePath, mode)
 if ~ispc
     error("ERG:AdoNotAvailable", "ADO import is only available on Windows MATLAB.");
 end
@@ -57,39 +69,69 @@ if isempty(conn)
 end
 
 cleanup = onCleanup(@() localSafeCloseAdoConnection(conn));
-tableNames = localGetAdoTableNames(conn);
-tables = repmat(struct("Name", "", "Data", table()), 1, numel(tableNames));
+schemas = localGetAdoSchemas(conn);
+selectedTableNames = localSelectTableNamesForMode(schemas, mode);
+tables = repmat(struct("Name", "", "Data", table()), 1, numel(selectedTableNames));
 
-for idx = 1:numel(tableNames)
-    tables(idx).Name = tableNames{idx};
-    tables(idx).Data = localAdoQueryTable(conn, tableNames{idx});
+for idx = 1:numel(selectedTableNames)
+    tables(idx).Name = selectedTableNames{idx};
+    tables(idx).Data = localAdoQueryTable(conn, selectedTableNames{idx});
 end
 
 mdbData = struct();
 mdbData.Provider = providerUsed;
-mdbData.TableNames = string(tableNames(:));
+mdbData.Mode = mode;
+mdbData.TableNames = string(selectedTableNames(:));
+mdbData.AvailableTableNames = string({schemas.Name}');
+mdbData.Schemas = schemas;
 mdbData.Tables = tables;
+
 clear cleanup
 localSafeCloseAdoConnection(conn);
 end
 
-function tableNames = localGetAdoTableNames(conn)
+function schemas = localGetAdoSchemas(conn)
 schemaRs = conn.OpenSchema(20);
 cleanup = onCleanup(@() localSafeCloseRecordset(schemaRs));
-tableNames = {};
+schemas = repmat(struct("Name", "", "Type", "", "Columns", strings(0, 1)), 0, 1);
 
 while ~schemaRs.EOF
     tableName = string(schemaRs.Fields.Item('TABLE_NAME').Value);
     tableType = string(schemaRs.Fields.Item('TABLE_TYPE').Value);
 
     if any(tableType == ["TABLE", "VIEW"]) && ~startsWith(tableName, "MSys")
-        tableNames{end + 1} = char(tableName); %#ok<AGROW>
+        cols = localGetAdoTableColumns(conn, char(tableName));
+        schemas(end + 1, 1) = struct( ... %#ok<AGROW>
+            "Name", char(tableName), ...
+            "Type", char(tableType), ...
+            "Columns", cols(:));
     end
     schemaRs.MoveNext;
 end
 
 clear cleanup
 localSafeCloseRecordset(schemaRs);
+end
+
+function columns = localGetAdoTableColumns(conn, tableName)
+columns = strings(0, 1);
+query = sprintf('SELECT * FROM [%s] WHERE 1=0', strrep(tableName, ']', ']]'));
+
+try
+    rs = conn.Execute(query);
+catch
+    query = sprintf('SELECT TOP 1 * FROM [%s]', strrep(tableName, ']', ']]'));
+    rs = conn.Execute(query);
+end
+
+cleanup = onCleanup(@() localSafeCloseRecordset(rs));
+fieldCount = rs.Fields.Count;
+for idx = 1:fieldCount
+    columns(end + 1, 1) = string(rs.Fields.Item(idx - 1).Name); %#ok<AGROW>
+end
+
+clear cleanup
+localSafeCloseRecordset(rs);
 end
 
 function tbl = localAdoQueryTable(conn, tableName)
@@ -169,27 +211,13 @@ catch
 end
 end
 
-function mdbData = localReadViaJdbc(filePath)
-jarPaths = localResolveUcanaccessJars(filePath);
+function mdbData = localReadViaJdbc(filePath, mode)
+jarPaths = localResolveUcanaccessJars();
 if isempty(jarPaths)
     error("ERG:JdbcUnavailable", "UCanAccess jars not found.");
 end
 
-dynamicPath = string(javaclasspath('-dynamic'));
-for idx = 1:numel(jarPaths)
-    if ~any(dynamicPath == string(jarPaths{idx}))
-        javaaddpath(jarPaths{idx});
-    end
-end
-
-driver = [];
-try
-    driver = javaObject('net.ucanaccess.jdbc.UcanaccessDriver');
-catch err
-    error("ERG:JdbcDriverLoadFailed", ...
-        "UCanAccess jar was found, but MATLAB could not load the driver class: %s", err.message);
-end
-
+driver = localGetJdbcDriver(jarPaths);
 mirrorRoot = localEnsureMirrorRoot();
 existingMirrorDirs = localListMirrorDirs(mirrorRoot);
 url = ['jdbc:ucanaccess://' filePath ...
@@ -205,32 +233,89 @@ cleanup = onCleanup(@() localSafeCloseJdbcConnection(conn));
 cleanupMirror = onCleanup(@() localCleanupMirrorDirs(mirrorRoot, existingMirrorDirs));
 
 meta = conn.getMetaData();
-rs = meta.getTables([], [], '%', []);
-tableNames = {};
+schemas = localGetJdbcSchemas(meta);
+selectedTableNames = localSelectTableNamesForMode(schemas, mode);
+tables = repmat(struct("Name", "", "Data", table()), 1, numel(selectedTableNames));
 
-while rs.next()
-    tableName = char(rs.getString('TABLE_NAME'));
-    tableType = char(rs.getString('TABLE_TYPE'));
-    if any(strcmpi(tableType, {'TABLE', 'VIEW'})) && ~startsWith(string(tableName), "MSys")
-        tableNames{end + 1} = tableName; %#ok<AGROW>
-    end
-end
-localSafeCloseJdbcResult(rs);
-
-tables = repmat(struct("Name", "", "Data", table()), 1, numel(tableNames));
-for idx = 1:numel(tableNames)
-    tables(idx).Name = tableNames{idx};
-    tables(idx).Data = localJdbcQueryTable(conn, tableNames{idx});
+for idx = 1:numel(selectedTableNames)
+    tables(idx).Name = selectedTableNames{idx};
+    tables(idx).Data = localJdbcQueryTable(conn, selectedTableNames{idx});
 end
 
 mdbData = struct();
 mdbData.Provider = "UCanAccess";
-mdbData.TableNames = string(tableNames(:));
+mdbData.Mode = mode;
+mdbData.TableNames = string(selectedTableNames(:));
+mdbData.AvailableTableNames = string({schemas.Name}');
+mdbData.Schemas = schemas;
 mdbData.Tables = tables;
 
 clear cleanup cleanupMirror
 localSafeCloseJdbcConnection(conn);
 localCleanupMirrorDirs(mirrorRoot, existingMirrorDirs);
+end
+
+function driver = localGetJdbcDriver(jarPaths)
+persistent cachedDriver
+
+dynamicPath = string(javaclasspath('-dynamic'));
+for idx = 1:numel(jarPaths)
+    if ~any(dynamicPath == string(jarPaths{idx}))
+        javaaddpath(jarPaths{idx});
+    end
+end
+
+if ~isempty(cachedDriver)
+    try
+        cachedDriver.getMajorVersion();
+        driver = cachedDriver;
+        return;
+    catch
+        cachedDriver = [];
+    end
+end
+
+try
+    cachedDriver = javaObject('net.ucanaccess.jdbc.UcanaccessDriver');
+catch err
+    error("ERG:JdbcDriverLoadFailed", ...
+        "UCanAccess jar was found, but MATLAB could not load the driver class: %s", err.message);
+end
+
+driver = cachedDriver;
+end
+
+function schemas = localGetJdbcSchemas(meta)
+rs = meta.getTables([], [], '%', []);
+cleanup = onCleanup(@() localSafeCloseJdbcResult(rs));
+schemas = repmat(struct("Name", "", "Type", "", "Columns", strings(0, 1)), 0, 1);
+
+while rs.next()
+    tableName = char(rs.getString('TABLE_NAME'));
+    tableType = char(rs.getString('TABLE_TYPE'));
+    if any(strcmpi(tableType, {'TABLE', 'VIEW'})) && ~startsWith(string(tableName), "MSys")
+        schemas(end + 1, 1) = struct( ... %#ok<AGROW>
+            "Name", tableName, ...
+            "Type", tableType, ...
+            "Columns", localGetJdbcTableColumns(meta, tableName));
+    end
+end
+
+clear cleanup
+localSafeCloseJdbcResult(rs);
+end
+
+function columns = localGetJdbcTableColumns(meta, tableName)
+columns = strings(0, 1);
+rs = meta.getColumns([], [], tableName, '%');
+cleanup = onCleanup(@() localSafeCloseJdbcResult(rs));
+
+while rs.next()
+    columns(end + 1, 1) = string(char(rs.getString('COLUMN_NAME'))); %#ok<AGROW>
+end
+
+clear cleanup
+localSafeCloseJdbcResult(rs);
 end
 
 function tbl = localJdbcQueryTable(conn, tableName)
@@ -325,7 +410,89 @@ catch
 end
 end
 
-function jarPaths = localResolveUcanaccessJars(filePath)
+function selectedTableNames = localSelectTableNamesForMode(schemas, mode)
+tableNames = {schemas.Name};
+if mode == "full" || isempty(schemas)
+    selectedTableNames = tableNames;
+    return;
+end
+
+metadataIdx = localFindMetadataSchemaIndex(schemas);
+if isempty(metadataIdx)
+    selectedTableNames = tableNames;
+    return;
+end
+
+selectedTableNames = {schemas(metadataIdx).Name};
+for idx = 1:numel(schemas)
+    if idx == metadataIdx
+        continue;
+    end
+
+    if localIsWaveformCandidateSchema(schemas(idx))
+        selectedTableNames{end + 1} = schemas(idx).Name; %#ok<AGROW>
+    end
+end
+
+selectedTableNames = unique(selectedTableNames, 'stable');
+end
+
+function metadataIdx = localFindMetadataSchemaIndex(schemas)
+metadataIdx = [];
+preferredNames = ["patientinformation", "patient_info", "patient"];
+
+for idx = 1:numel(schemas)
+    normalizedName = localNormalizeName(schemas(idx).Name);
+    if any(normalizedName == preferredNames)
+        metadataIdx = idx;
+        return;
+    end
+end
+
+for idx = 1:numel(schemas)
+    if localSchemaHasColumns(schemas(idx), ["record", "recordnumber"]) && ...
+            localSchemaHasColumns(schemas(idx), ["longprotocol", "protocol"]) && ...
+            localSchemaHasColumns(schemas(idx), ["testdate", "testtime"])
+        metadataIdx = idx;
+        return;
+    end
+end
+end
+
+function tf = localIsWaveformCandidateSchema(schema)
+normalizedName = localNormalizeName(schema.Name);
+tf = false;
+
+if localSchemaHasColumns(schema, ["record", "recordnumber"]) && ...
+        localSchemaHasColumns(schema, ["data", "multidata", "lval", "rval", "value", "wavevalue", "datavalue", "samplevalue"])
+    tf = true;
+    return;
+end
+
+if contains(normalizedName, "lval") && localSchemaHasColumns(schema, ["record", "recordnumber"])
+    tf = true;
+end
+end
+
+function tf = localSchemaHasColumns(schema, aliases)
+columns = lower(strtrim(string(schema.Columns)));
+aliasValues = lower(strtrim(string(aliases)));
+tf = false;
+
+for idx = 1:numel(aliasValues)
+    if any(columns == aliasValues(idx))
+        tf = true;
+        return;
+    end
+end
+end
+
+function normalized = localNormalizeName(name)
+normalized = lower(regexprep(char(string(name)), '[^a-z0-9]+', ''));
+normalized = string(normalized);
+end
+
+function jarPaths = localResolveUcanaccessJars()
 rootDir = getErgAnalyzerRoot();
 candidateRoots = { ...
     fullfile(rootDir, 'third_party', 'ucanaccess'), ...
