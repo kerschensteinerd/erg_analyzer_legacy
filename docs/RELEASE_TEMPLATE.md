@@ -27,5 +27,25 @@ Use this template for a shared macOS + Windows GitHub release.
 
 - This release is for end users without MATLAB
 - Source code remains available in the repository for maintainers and MATLAB users
-- **macOS**: If the installer shows "damaged and can't be opened", or if your institution only allows apps from the App Store & Known Developers, open Terminal and run `xattr -cr /path/to/ERGAnalyzer-<version>-macOS-installer` to clear the quarantine flag, then retry
+- **macOS**: See the workaround below if the installer shows "damaged and can't be opened"
 - **Windows**: SmartScreen may warn because the app is unsigned — choose `More info`, then `Run anyway` only if you trust the release source
+
+## macOS: Installer shows "damaged and can't be opened"
+
+macOS applies a quarantine flag to files downloaded from the internet. For unsigned apps this
+causes a "damaged and can't be opened" error that cannot be dismissed through System Settings.
+
+Open **Terminal** and run:
+
+```
+xattr -cr ~/Downloads/ERGAnalyzer-<version>-macOS-installer
+```
+
+Replace the path with the actual path to the unzipped installer folder on your machine, then
+try running the installer again.
+
+If macOS instead shows an "unidentified developer" prompt (rather than the "damaged" message),
+open **System Settings > Privacy & Security**, allow the app to open, and retry.
+
+If your institution's MDM policy disables the "Allow Anyway" button, the `xattr -cr` command
+above still works. If Terminal is also blocked, contact your IT department or the maintainer.
