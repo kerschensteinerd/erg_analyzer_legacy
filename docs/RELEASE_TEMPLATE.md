@@ -27,5 +27,5 @@ Use this template for a shared macOS + Windows GitHub release.
 
 - This release is for end users without MATLAB
 - Source code remains available in the repository for maintainers and MATLAB users
-- **macOS**: If the installer shows "damaged and can't be opened", open Terminal and run `xattr -cr /path/to/ERGAnalyzer-<version>-macOS-installer` to clear the quarantine flag, then retry
+- **macOS**: If the installer shows "damaged and can't be opened", or if your institution only allows apps from the App Store & Known Developers, open Terminal and run `xattr -cr /path/to/ERGAnalyzer-<version>-macOS-installer` to clear the quarantine flag, then retry
 - **Windows**: SmartScreen may warn because the app is unsigned — choose `More info`, then `Run anyway` only if you trust the release source

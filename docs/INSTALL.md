@@ -59,6 +59,25 @@ the "damaged" message, open:
 
 Then allow the app to open and retry.
 
+### My institution only allows applications from the App Store & Known Developers
+
+Institutional macOS systems managed by MDM may lock Gatekeeper so that the
+"Allow Anyway" button in System Settings is disabled or absent.
+
+The underlying cause is the same as the "damaged" error: macOS has flagged the
+downloaded file with a quarantine attribute. Removing that attribute before
+running the installer prevents Gatekeeper from blocking it:
+
+```
+xattr -cr ~/Downloads/ERGAnalyzer-<version>-macOS-installer
+```
+
+Replace the path with the actual path to the unzipped installer folder on your
+machine, then try running the installer again.
+
+If your IT policy prevents running Terminal commands, ask your IT department to
+whitelist the application or contact the maintainer for a code-signed build.
+
 ### Windows shows a SmartScreen warning
 
 If the release is unsigned, choose `More info` and then `Run anyway` only if you trust the release source.
